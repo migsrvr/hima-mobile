@@ -2,6 +2,8 @@
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
+For Hima on a physical Android phone, follow [Windows and phone setup](./WINDOWS_PHONE_SETUP.md). Hima needs its development APK; the guide covers Windows Metro, Wi-Fi checks, EAS build status, and the WSL port-proxy alternative.
+
 ## Get started
 
 1. Install dependencies

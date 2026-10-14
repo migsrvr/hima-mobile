@@ -1,42 +1,55 @@
 {
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "Hima",
+    "slug": "hima",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
-    "userInterfaceStyle": "automatic",
-    "ios": {
-      "icon": "./assets/expo.icon"
-    },
+    "scheme": "hima",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F5FAFE",
     "android": {
+      "package": "com.paiflow.hima",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
+      "permissions": [
+        "android.permission.NFC"
+      ],
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "./plugins/withLocalApi.cjs",
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#39A9E8",
+          "image": "./assets/mascot/mascot-face.png",
+          "imageWidth": 120
         }
-      ]
+      ],
+      "expo-font",
+      "expo-secure-store",
+      "@react-native-community/datetimepicker",
+      "react-native-nfc-manager"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "63f64b2f-9f78-4627-9b0f-7bf370191617"
+      }
     }
   }
 }
