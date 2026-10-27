@@ -16,9 +16,11 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { View } from 'react-native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { BackendReadinessBanner } from '@/components/ui/BackendReadinessBanner';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useSessionStore } from '@/stores/session';
 import { colors } from '@/theme';
@@ -56,14 +58,17 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <KeyboardProvider>
         <StatusBar style="dark" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.background },
-            animation: reducedMotion ? 'none' : 'fade',
-            animationDuration: 250,
-          }}
-        />
+        <View style={{ flex: 1 }}>
+          <BackendReadinessBanner />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: colors.background },
+              animation: reducedMotion ? 'none' : 'fade',
+              animationDuration: 250,
+            }}
+          />
+        </View>
       </KeyboardProvider>
     </SafeAreaProvider>
   );

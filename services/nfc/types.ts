@@ -19,4 +19,6 @@ export type NfcService = {
   readTag(timeoutMs: number): Promise<TagRead>;
   cancel(): Promise<void>;
   openSettings(): Promise<void>;
+  /** True when taps are simulated (public demo without NFC hardware). Read after availability(). */
+  simulated(): boolean;
 };

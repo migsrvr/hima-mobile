@@ -1,5 +1,7 @@
 # Run Hima on a physical Android phone from Windows
 
+For a downloadable APK that works without your PC or USB, use the [hosted demo guide](../docs/HOSTED_DEMO.md). `npm.cmd run apk:windows` builds against your public HTTPS API and exports the APK plus checksum without needing a phone connected. The USB commands below remain available for local development.
+
 ## USB workflow (preferred, 2026-10-14)
 
 Use a USB data cable with USB debugging enabled and accept the debugging prompt on the phone. The phone reaches the PC's backend through `adb reverse`, using `http://127.0.0.1:3001`. No Wi-Fi address is needed. The PC still needs internet for Groq, Paiflow, and Stellar.

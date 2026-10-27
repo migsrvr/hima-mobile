@@ -1,3 +1,5 @@
+import { DEMO_MODE } from '@/services/demo';
+
 import type { NfcService, TagRead } from './types';
 
 export type { NfcAvailability, RawTag, TagMeaning, TagRead } from './types';
@@ -16,6 +18,10 @@ try {
   NfcManager = null;
 }
 
+/** Expo Go has no native module; the public demo build also simulates taps on devices without NFC (emulators). */
+let simulate = !NfcManager;
+const SIMULATED_TAG = { id: '22:E9:4A:7A', techTypes: ['android.nfc.tech.NfcA', 'android.nfc.tech.MifareClassic'] };
+
 let started = false;
 async function start() {
   if (started || !NfcManager) return;
@@ -31,20 +37,25 @@ async function start() {
 export const nfc: NfcService = {
   async availability() {
     if (!NfcManager) return 'ready'; // Expo Go demo fallback
+    let availability: 'ready' | 'disabled' | 'unsupportedDevice';
     try {
-      if (!(await NfcManager.isSupported())) return 'unsupportedDevice';
-      await start();
-      return (await NfcManager.isEnabled()) ? 'ready' : 'disabled';
+      if (!(await NfcManager.isSupported())) availability = 'unsupportedDevice';
+      else {
+        await start();
+        availability = (await NfcManager.isEnabled()) ? 'ready' : 'disabled';
+      }
     } catch {
-      return 'unsupportedDevice';
+      availability = 'unsupportedDevice';
     }
+    simulate = DEMO_MODE && availability !== 'ready';
+    return simulate ? 'ready' : availability;
   },
 
   async readTag(timeoutMs) {
-    // If running in Expo Go where native module is missing, simulate the registered Uni ID tag
-    if (!NfcManager) {
+    // Expo Go, or the public demo on a device without NFC: simulate the registered student ID tag.
+    if (simulate) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      return { id: '22:E9:4A:7A', techTypes: ['android.nfc.tech.NfcA', 'android.nfc.tech.MifareClassic'] };
+      return SIMULATED_TAG;
     }
 
     await start();
@@ -80,6 +91,9 @@ export const nfc: NfcService = {
       NfcManager.cancelTechnologyRequest().catch(() => {});
     }
   },
+
+  // Only the public demo says so on screen; Expo Go keeps the designed copy.
+  simulated: () => DEMO_MODE && simulate,
 
   async cancel() {
     if (NfcManager) {

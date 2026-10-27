@@ -59,13 +59,19 @@
     "usb:windows": "node scripts/usb-windows.cjs",
     "android": "expo run:android",
     "android:windows": "node scripts/android-windows.cjs",
+    "apk:windows": "node scripts/android-windows.cjs --apk-only --variant release",
+    "test:release": "node --test --experimental-test-isolation=none scripts/tests/*.test.cjs",
     "web": "expo start --web",
+    "web:demo": "node scripts/web-demo.cjs",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test": "jest"
   },
   "private": true,
   "jest": {
-    "preset": "jest-expo"
+    "preset": "jest-expo",
+    "moduleNameMapper": {
+      "^@/(.*)$": "<rootDir>/$1"
+    }
   }
 }

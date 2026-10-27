@@ -1,13 +1,11 @@
-import { Platform } from 'react-native';
+import { API_URL, backend } from './backend';
 
-const DEFAULT_API_URL = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
-
-/** Hima backend. scripts/start-windows.cjs points EXPO_PUBLIC_API_URL at the PC's LAN address for a phone. */
-export const API_URL = (process.env.EXPO_PUBLIC_API_URL || DEFAULT_API_URL).replace(/\/+$/, '');
+export { API_URL } from './backend';
 
 /**
  * `unreachable`: no answer at all (offline, server down, timeout), so the outcome is unknown.
  * `http`: the server answered with an error; `code` and `message` come from its `{ error }` body.
+ * `SESSION_CHANGED` is a local 401 guard against sending or delivering an operation for another login.
  */
 export class ApiError extends Error {
   constructor(
@@ -29,29 +27,61 @@ type ApiInit = {
   auth?: boolean;
   /** Tests pass a fake. */
   fetchImpl?: typeof fetch;
+  /** Explicit readiness dependency for isolated tests. Fetch injection alone never bypasses readiness. */
+  ensureReady?: () => Promise<void>;
+  /** Bind a multi-request operation to its initiating login. */
+  sessionGeneration?: number;
 };
 
 /** The server-issued session token, and how to get a new one when it is rejected. Set by the session store. */
 let sessionToken: string | null = null;
 let renewSession: (() => Promise<string | null>) | null = null;
+let sessionGeneration = 0;
 
+/** An explicit renewal callback (or null) starts a new login/logout epoch; token-only updates renew the current account. */
 export function setApiSession(token: string | null, renew?: (() => Promise<string | null>) | null) {
+  if (renew !== undefined || !token) sessionGeneration += 1;
   sessionToken = token || null;
   if (renew !== undefined) renewSession = renew;
 }
+
+export const getApiSessionGeneration = () => sessionGeneration;
 
 /**
  * JSON request to the Hima backend. Never returns made-up data: failures throw ApiError.
  * A rejected session (401) is renewed once and the request retried.
  */
 export async function apiFetch<T>(path: string, init: ApiInit = {}): Promise<T> {
+  const generation = init.sessionGeneration ?? sessionGeneration;
+  const checkSession = () => {
+    if (init.auth !== false && generation !== sessionGeneration) {
+      throw new ApiError('http', 401, 'SESSION_CHANGED', 'Your account changed. Try again from your current account.');
+    }
+  };
+  checkSession();
   try {
-    return await send<T>(path, init, sessionToken);
+    await (init.ensureReady ?? backend.ensureReady)();
+  } catch {
+    checkSession();
+    throw new ApiError('unreachable', undefined, 'BACKEND_UNAVAILABLE', "Hima's server is unavailable. Try again when connected.");
+  }
+  checkSession();
+  try {
+    const result = await send<T>(path, init, sessionToken);
+    checkSession();
+    return result;
   } catch (error) {
+    checkSession();
     if (!(error instanceof ApiError && error.status === 401) || init.auth === false || !renewSession) throw error;
+    checkSession();
     const token = await renewSession().catch(() => null);
+    checkSession();
     if (!token) throw error;
-    return send<T>(path, init, token);
+    try {
+      return await send<T>(path, init, token);
+    } finally {
+      checkSession();
+    }
   }
 }
 

@@ -1,3 +1,4 @@
+import { DEMO_MODE } from '@/services/demo';
 import { DEMO_TAG_REGISTRY } from '@/services/payments/merchants';
 
 import type { NfcAvailability, NfcService, TagRead } from './types';
@@ -6,8 +7,8 @@ export type { NfcAvailability, RawTag, TagMeaning, TagRead } from './types';
 export { classifyTag } from './classify';
 
 /**
- * Web preview stand-in (browsers have no NFC). In dev it simulates a tap of the
- * registered demo tag; localStorage["hima.dev.nfc"] can force another outcome:
+ * Web stand-in (browsers have no NFC). In dev and in the public demo build it simulates a tap of
+ * the registered demo tag; in dev, localStorage["hima.dev.nfc"] can force another outcome:
  * "unknown" | "unsupported" | "timeout" | "disabled".
  */
 const forced = (): string | null => (__DEV__ ? (globalThis.localStorage?.getItem('hima.dev.nfc') ?? null) : null);
@@ -15,7 +16,7 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const nfc: NfcService = {
   async availability(): Promise<NfcAvailability> {
-    if (!__DEV__) return 'unsupportedDevice';
+    if (!__DEV__ && !DEMO_MODE) return 'unsupportedDevice';
     return forced() === 'disabled' ? 'disabled' : 'ready';
   },
 
@@ -32,6 +33,7 @@ export const nfc: NfcService = {
     return { id: demoUid, techTypes: ['android.nfc.tech.NfcA', 'android.nfc.tech.MifareClassic'] };
   },
 
+  simulated: () => DEMO_MODE,
   async cancel() {},
   async openSettings() {},
 };

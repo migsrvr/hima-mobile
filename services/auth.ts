@@ -12,6 +12,15 @@ import { secureStorage } from './secureStorage';
 
 const SESSION_KEY = 'hima.session';
 const LATENCY_MS = 600;
+let accountVersion = 0;
+let persistence: Promise<void> = Promise.resolve();
+
+/** A started write must finish before logout deletes it or another account replaces it. */
+function serialize<T>(operation: () => Promise<T>): Promise<T> {
+  const result = persistence.then(operation);
+  persistence = result.then(() => {}, () => {});
+  return result;
+}
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -36,14 +45,20 @@ async function serverToken(email: string): Promise<string> {
 }
 
 async function createSession(email: string): Promise<Session> {
+  const version = ++accountVersion;
   const normalized = email.trim().toLowerCase();
-  const [token] = await Promise.all([serverToken(normalized), wait(LATENCY_MS)]);
+  // Local demo access stays available while the session store renews the server token in the background.
+  await wait(LATENCY_MS);
   const session: Session = {
-    token,
+    token: '',
     user: { id: normalized, email: normalized, ...nameFromEmail(normalized) },
   };
-  await secureStorage.set(SESSION_KEY, JSON.stringify(session));
-  return session;
+  return serialize(async () => {
+    if (version !== accountVersion) throw new Error('The active account changed.');
+    await secureStorage.set(SESSION_KEY, JSON.stringify(session));
+    if (version !== accountVersion) throw new Error('The active account changed.');
+    return session;
+  });
 }
 
 export const authService = {
@@ -51,26 +66,34 @@ export const authService = {
   signUp: (email: string, _password: string) => createSession(email),
 
   async restore(): Promise<Session | null> {
-    const raw = await secureStorage.get(SESSION_KEY);
-    if (!raw) return null;
-    try {
-      return JSON.parse(raw) as Session;
-    } catch {
-      await secureStorage.remove(SESSION_KEY);
-      return null;
-    }
+    const version = accountVersion;
+    return serialize(async () => {
+      const raw = await secureStorage.get(SESSION_KEY);
+      if (!raw || version !== accountVersion) return null;
+      try {
+        return JSON.parse(raw) as Session;
+      } catch {
+        await secureStorage.remove(SESSION_KEY);
+        return null;
+      }
+    });
   },
 
-  /** A fresh server token for an existing session (expired, rejected, or never issued). */
-  async renew(session: Session): Promise<Session | null> {
+  /** A fresh server token. Discard delayed replies after the active account changes. */
+  async renew(session: Session, isCurrent: () => boolean = () => true): Promise<Session | null> {
+    const version = accountVersion;
     const token = await serverToken(session.user.email);
     if (!token) return null;
-    const next = { ...session, token };
-    await secureStorage.set(SESSION_KEY, JSON.stringify(next));
-    return next;
+    return serialize(async () => {
+      if (version !== accountVersion || !isCurrent()) return null;
+      const next = { ...session, token };
+      await secureStorage.set(SESSION_KEY, JSON.stringify(next));
+      return version === accountVersion && isCurrent() ? next : null;
+    });
   },
 
   async logOut(): Promise<void> {
-    await secureStorage.remove(SESSION_KEY);
+    accountVersion++;
+    await serialize(() => secureStorage.remove(SESSION_KEY));
   },
 };

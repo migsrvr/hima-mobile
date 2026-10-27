@@ -2,7 +2,7 @@
   "expo": {
     "name": "Hima",
     "slug": "hima",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "hima",
@@ -10,6 +10,7 @@
     "backgroundColor": "#F5FAFE",
     "android": {
       "package": "com.paiflow.hima",
+      "versionCode": 2,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -27,6 +28,7 @@
     },
     "plugins": [
       "./plugins/withLocalApi.cjs",
+      "./plugins/withApiBundleInput.cjs",
       "expo-router",
       [
         "expo-splash-screen",

@@ -24,6 +24,8 @@ type Props = {
   merchant?: Merchant;
   /** "Today's food plan" / "₱150.00 left" (11c). */
   planLeft?: { label: string; value: string };
+  /** Public demo without NFC hardware: the tap is simulated. */
+  simulatedTap?: boolean;
   onClose: () => void;
   onContinue: () => void;
   onRetry: () => void;
@@ -31,7 +33,7 @@ type Props = {
 };
 
 /** 11a–11g Tap to Pay scanner. */
-export function NfcScanView({ state, tagId, merchant, planLeft, onClose, onContinue, onRetry, onOpenSettings }: Props) {
+export function NfcScanView({ state, tagId, merchant, planLeft, simulatedTap, onClose, onContinue, onRetry, onOpenSettings }: Props) {
   const header = (
     <HimaHeader leading="close" onLeadingPress={onClose} title="Tap to Pay" trailing={<TestnetBadge />} />
   );
@@ -57,8 +59,10 @@ export function NfcScanView({ state, tagId, merchant, planLeft, onClose, onConti
           <View style={styles.demo}>
             <Info size={18} color={colors.deepSkyBlue} strokeWidth={2} style={styles.demoIcon} />
             <Text style={styles.demoText}>
-              <Text style={styles.strong}>Demo mode:</Text> the registered student ID stands in for a merchant tag. Hima only reads its
-              ID, never writes to the card, and charges nothing until you confirm.
+              <Text style={styles.strong}>Demo mode:</Text>{' '}
+              {simulatedTap
+                ? 'this device has no NFC, so Hima simulates a tap of the registered student ID. Nothing is charged until you confirm.'
+                : 'the registered student ID stands in for a merchant tag. Hima only reads its ID, never writes to the card, and charges nothing until you confirm.'}
             </Text>
           </View>
           {cancel('Cancel', 'secondary')}

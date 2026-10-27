@@ -24,6 +24,7 @@ export default function ScanScreen() {
   const [state, setState] = useState<NfcScreenState>('ready');
   const [tagId, setTagId] = useState<string>();
   const [merchant, setMerchant] = useState<Merchant>();
+  const [simulatedTap, setSimulatedTap] = useState(false);
   const run = useRef(0);
 
   const scan = useCallback(async () => {
@@ -34,6 +35,7 @@ export default function ScanScreen() {
     if (!live()) return;
     if (availability === 'disabled') return setState('disabled');
     if (availability === 'unsupportedDevice') return setState('noNfc');
+    setSimulatedTap(nfc.simulated());
 
     setState('ready');
     const read = await nfc.readTag(SCAN_TIMEOUT_MS);
@@ -96,6 +98,7 @@ export default function ScanScreen() {
       tagId={tagId}
       merchant={merchant}
       planLeft={planLeft}
+      simulatedTap={simulatedTap}
       onClose={close}
       onRetry={retry}
       onOpenSettings={() => nfc.openSettings()}

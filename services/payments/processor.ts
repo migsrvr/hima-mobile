@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-import { ApiError, apiFetch } from '@/services/api';
+import { ApiError, apiFetch, getApiSessionGeneration } from '@/services/api';
 import { formatStroopsDecimal, splitByPercents, toStroops } from '@/utils/asset';
 
 import { explorerTxUrl } from './network';
@@ -99,20 +99,22 @@ const fromView = (v: PaymentView): PaymentOutcome => {
 
 type Deps = {
   fetchImpl?: typeof fetch;
+  ensureReady?: () => Promise<void>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 };
 
 /** Real payments: the Hima server pays through the Paiflow deployment and reports the on-chain outcome. */
-export function createPaiflowProcessor({ fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }: Deps = {}): PaymentProcessor {
-  const read = (paymentId: string) => apiFetch<PaymentView>(`/api/payments/${encodeURIComponent(paymentId)}`, { fetchImpl, timeoutMs: 15_000 });
+export function createPaiflowProcessor({ fetchImpl, ensureReady, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }: Deps = {}): PaymentProcessor {
+  const read = (paymentId: string, sessionGeneration: number) => apiFetch<PaymentView>(`/api/payments/${encodeURIComponent(paymentId)}`, { fetchImpl, ensureReady, sessionGeneration, timeoutMs: 15_000 });
 
   /** The submission got no usable answer: ask whether the server ever created the payment. */
-  async function resolveUnanswered(paymentId: string, reasonIfMissing: string): Promise<PaymentOutcome> {
+  async function resolveUnanswered(paymentId: string, reasonIfMissing: string, sessionGeneration: number): Promise<PaymentOutcome> {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        return fromView(await read(paymentId));
+        return fromView(await read(paymentId, sessionGeneration));
       } catch (e) {
+        if (e instanceof ApiError && ['BACKEND_UNAVAILABLE', 'SESSION_CHANGED'].includes(e.code)) return { status: 'pending' };
         // The server never created it, so nothing was signed or sent.
         if (e instanceof ApiError && e.kind === 'http' && e.status === 404) return { status: 'failed', failureReason: reasonIfMissing };
         if (attempt < 2) await sleep(1500);
@@ -124,30 +126,38 @@ export function createPaiflowProcessor({ fetchImpl, sleep = (ms) => new Promise(
 
   return {
     async quote(request) {
-      const v = await apiFetch<PaymentView>('/api/checkout/quote', { method: 'POST', body: request, fetchImpl, timeoutMs: 15_000 });
+      const v = await apiFetch<PaymentView>('/api/checkout/quote', { method: 'POST', body: request, fetchImpl, ensureReady, timeoutMs: 15_000 });
       return { quoteId: v.quoteId ?? v.paymentId, split: v.split ?? [], autoSaved: v.autoSaved ?? null };
     },
 
     async submit(request, { quoteId } = {}) {
+      const sessionGeneration = getApiSessionGeneration();
       try {
         // A quoted checkout pays exactly that quote; otherwise the server quotes and pays in one step.
         const body = quoteId ? { quoteId } : request;
-        return fromView(await apiFetch<PaymentView>('/api/checkout/payments', { method: 'POST', body, fetchImpl, timeoutMs: 45_000 }));
+        return fromView(await apiFetch<PaymentView>('/api/checkout/payments', { method: 'POST', body, fetchImpl, ensureReady, sessionGeneration, timeoutMs: 45_000 }));
       } catch (e) {
+        // Readiness failed before this POST. A prior call with the same payment id
+        // may already have reached the server; reconcile when connectivity returns.
+        if (e instanceof ApiError && ['BACKEND_UNAVAILABLE', 'SESSION_CHANGED'].includes(e.code)) return { status: 'pending' };
+        // The public demo's daily limit refuses the payment before anything is signed or sent.
+        if (e instanceof ApiError && e.status === 429) return { status: 'failed', failureReason: e.message };
         const reason = e instanceof ApiError && e.kind === 'http' ? e.message : "Couldn't reach Hima's server";
-        return resolveUnanswered(request.paymentId, reason);
+        return resolveUnanswered(request.paymentId, reason, sessionGeneration);
       }
     },
 
     async waitForConfirmation(paymentId) {
+      const sessionGeneration = getApiSessionGeneration();
       const started = now();
       let latest: PaymentOutcome = { status: 'pending' };
       for (let i = 0; now() - started < CONFIRMATION_TIMEOUT_MS; i++) {
         await sleep(POLL_DELAYS_MS[Math.min(i, POLL_DELAYS_MS.length - 1)]);
         try {
-          latest = fromView(await read(paymentId));
+          latest = fromView(await read(paymentId, sessionGeneration));
           if (latest.status !== 'pending') return latest;
-        } catch {
+        } catch (e) {
+          if (e instanceof ApiError && ['BACKEND_UNAVAILABLE', 'SESSION_CHANGED'].includes(e.code)) break;
           // Unreachable or not found for now: keep following until the timeout.
         }
       }
@@ -155,9 +165,10 @@ export function createPaiflowProcessor({ fetchImpl, sleep = (ms) => new Promise(
     },
 
     async checkStatus(paymentId, txHash) {
-      if (!txHash) return resolveUnanswered(paymentId, "The payment never reached Hima's server");
+      const sessionGeneration = getApiSessionGeneration();
+      if (!txHash) return resolveUnanswered(paymentId, "The payment never reached Hima's server", sessionGeneration);
       try {
-        return fromView(await read(paymentId));
+        return fromView(await read(paymentId, sessionGeneration));
       } catch {
         return { status: 'pending', txHash };
       }

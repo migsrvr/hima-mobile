@@ -18,21 +18,38 @@ type SessionState = {
 const looksSigned = (token: string) => token.split('.').length === 2;
 
 export const useSessionStore = create<SessionState>()((set, get) => {
-  /** Called by apiFetch when the server rejects the token: fetch a new one for the same account. */
-  const renew = async (): Promise<string | null> => {
+  let actionVersion = 0;
+  let renewal: { session: Session; promise: Promise<string | null> } | null = null;
+
+  /** Share startup renewal with a first request whose empty/expired token is rejected. */
+  const renew = (): Promise<string | null> => {
     const current = get().session;
-    if (!current) return null;
-    const next = await authService.renew(current);
-    if (!next) return null;
-    set({ session: next });
-    setApiSession(next.token);
-    return next.token;
+    if (!current) return Promise.resolve(null);
+    if (renewal?.session === current) return renewal.promise;
+    const promise = (async () => {
+      const next = await authService.renew(current, () => get().session === current);
+      if (!next || get().session !== current) return null;
+      set({ session: next });
+      setApiSession(next.token);
+      return next.token;
+    })().finally(() => {
+      if (renewal?.promise === promise) renewal = null;
+    });
+    renewal = { session: current, promise };
+    return promise;
   };
 
   const signedIn = (session: Session) => {
     set({ session, status: 'signedIn' });
     setApiSession(session.token, renew);
-    if (!looksSigned(session.token)) void renew();
+    if (!looksSigned(session.token)) void renew().catch(() => null);
+  };
+
+  const invalidate = () => {
+    const version = ++actionVersion;
+    setApiSession(null, null);
+    set({ session: null, status: 'signedOut' });
+    return version;
   };
 
   return {
@@ -40,23 +57,28 @@ export const useSessionStore = create<SessionState>()((set, get) => {
     session: null,
 
     restore: async () => {
+      const version = ++actionVersion;
       const session = await authService.restore().catch(() => null);
+      if (version !== actionVersion) return;
       if (session) signedIn(session);
-      else set({ session: null, status: 'signedOut' });
+      else invalidate();
     },
 
     logIn: async (email, password) => {
-      signedIn(await authService.logIn(email, password));
+      const version = invalidate();
+      const session = await authService.logIn(email, password);
+      if (version === actionVersion) signedIn(session);
     },
 
     signUp: async (email, password) => {
-      signedIn(await authService.signUp(email, password));
+      const version = invalidate();
+      const session = await authService.signUp(email, password);
+      if (version === actionVersion) signedIn(session);
     },
 
     logOut: async () => {
+      invalidate();
       await authService.logOut();
-      setApiSession(null, null);
-      set({ session: null, status: 'signedOut' });
     },
   };
 });

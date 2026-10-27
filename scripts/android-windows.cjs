@@ -1,8 +1,9 @@
 /* global __dirname */
 const { spawn } = require('node:child_process');
-const { existsSync, readFileSync, readdirSync } = require('node:fs');
+const { copyFileSync, existsSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, unlinkSync, writeFileSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { connectUsb, getUsbDeviceName } = require('./usb-windows.cjs');
+const { assertHostedApiUrl, exportApk } = require('./apk-artifact.cjs');
 
 if (process.platform !== 'win32') {
   console.error('Run this local Android launcher from Windows PowerShell or CMD.');
@@ -64,12 +65,21 @@ Object.assign(env, {
 });
 const root = resolve(__dirname, '..');
 const usb = process.argv.includes('--usb');
-const args = process.argv.slice(2).filter((arg) => arg !== '--usb');
+const apkOnly = process.argv.includes('--apk-only');
+const args = process.argv.slice(2).filter((arg) => !['--usb', '--apk-only'].includes(arg));
+if (apkOnly && usb) {
+  console.error('Use --apk-only for the hosted backend or --usb for local development.');
+  process.exit(1);
+}
 if (usb) env.EXPO_PUBLIC_API_URL = 'http://127.0.0.1:3001';
 const variantIndex = args.indexOf('--variant');
 const variant = args.find((arg) => arg.startsWith('--variant='))?.split('=')[1]
   || (variantIndex >= 0 ? args[variantIndex + 1] : 'debug');
 const release = !['debug', 'debugOptimized'].includes(variant);
+if (apkOnly && variant !== 'release') {
+  console.error('APK-only builds require --variant release. Use npm.cmd run apk:windows.');
+  process.exit(1);
+}
 if (release && !env.EXPO_PUBLIC_API_URL) {
   console.error('Set EXPO_PUBLIC_API_URL before building an APK with embedded JavaScript.');
   console.error('For a USB phone: npm.cmd run android:windows -- --usb --variant release');
@@ -86,23 +96,64 @@ if (env.EXPO_PUBLIC_API_URL) {
   console.log(`Hima backend baked into this build: ${env.EXPO_PUBLIC_API_URL}`);
 }
 
-function runExpo(command, next) {
-  const child = spawn(process.execPath, [
-    join(root, 'node_modules', 'expo', 'bin', 'cli'), ...command,
-  ], { cwd: root, env, stdio: 'inherit' });
-  child.once('error', (error) => {
-    console.error(`Could not launch Expo (${error.code || 'unknown error'}).`);
-    process.exitCode = 1;
+function run(executable, command, cwd = root) {
+  return new Promise((resolveRun, reject) => {
+    const child = spawn(executable, command, { cwd, env, stdio: 'inherit' });
+    child.once('error', (error) => reject(new Error(`Could not start the build tool (${error.code || 'unknown error'}).`)));
+    child.once('exit', (code, signal) => {
+      if (code === 0) resolveRun();
+      else reject(new Error(signal ? `Build interrupted (${signal}).` : `Build tool exited with code ${code}.`));
+    });
   });
-  child.once('exit', (code, signal) => {
-    if (code === 0 && next) next();
-    else process.exitCode = code ?? (signal === 'SIGINT' ? 0 : 1);
-  });
+}
+
+const runExpo = (command) => run(process.execPath, [join(root, 'node_modules', 'expo', 'bin', 'cli'), ...command]);
+
+function preserveSigningKey() {
+  const backup = join(root, '.credentials/hima-demo.keystore');
+  const native = join(root, 'android/app/debug.keystore');
+  mkdirSync(join(root, '.credentials'), { recursive: true });
+  if (!existsSync(backup) && existsSync(native)) copyFileSync(native, backup);
+  return () => {
+    if (existsSync(backup)) copyFileSync(backup, native);
+    else if (existsSync(native)) copyFileSync(native, backup);
+    else throw new Error('The Android signing key is missing. Do not distribute an unsigned APK.');
+  };
 }
 
 // run:android skips prebuild when android/ already exists. Apply config plugins
 // explicitly so a rebuilt APK cannot retain the old native HTTP policy.
 async function build() {
+  let lock;
+  let releaseCode;
+  const statePath = join(root, '.release/version-code.json');
+  const lockPath = join(root, '.release/build.lock');
+  const app = JSON.parse(readFileSync(join(root, 'app.json'), 'utf8')).expo;
+  if (apkOnly) {
+    env.EXPO_PUBLIC_API_URL = assertHostedApiUrl(env.EXPO_PUBLIC_API_URL);
+    mkdirSync(join(root, '.release'), { recursive: true });
+    try { lock = openSync(lockPath, 'wx'); } catch {
+      throw new Error('An APK-only build is already reserved. If no build is running, remove .release/build.lock and retry.');
+    }
+  }
+  try {
+    if (apkOnly) {
+      const previous = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')).versionCode : 0;
+      const nativeMeta = join(root, 'android/app/build/outputs/apk/release/output-metadata.json');
+      const nativeCode = existsSync(nativeMeta) ? JSON.parse(readFileSync(nativeMeta, 'utf8')).elements?.[0]?.versionCode ?? 0 : 0;
+      if (!Number.isInteger(previous) || previous < 0 || !Number.isInteger(nativeCode)) throw new Error('Invalid saved release version code.');
+      releaseCode = Math.max(app.android.versionCode ?? 1, previous + 1, nativeCode + 1);
+      if (env.HIMA_APK_VERSION_CODE) {
+        const explicit = Number(env.HIMA_APK_VERSION_CODE);
+        if (!/^[1-9]\d*$/.test(env.HIMA_APK_VERSION_CODE) || explicit < releaseCode) {
+          throw new Error(`HIMA_APK_VERSION_CODE must be at least ${releaseCode} for this release.`);
+        }
+        releaseCode = explicit;
+      }
+      if (releaseCode > 2100000000) throw new Error('Android version code limit exceeded.');
+      env.HIMA_APK_VERSION_CODE = String(releaseCode);
+      console.log(`Hosted APK version: ${app.version} (${releaseCode})`);
+    }
   if (usb) {
     const serial = await connectUsb(sdkHome);
     env.ANDROID_SERIAL = serial;
@@ -115,9 +166,21 @@ async function build() {
     env.REACT_NATIVE_PACKAGER_HOSTNAME = '127.0.0.1';
     env.EXPO_PACKAGER_PROXY_URL = 'http://127.0.0.1:8081';
   }
-  runExpo(['prebuild', '--platform', 'android', '--no-install'], () => {
-    runExpo(['run:android', ...args]);
-  });
+    const restoreKey = preserveSigningKey();
+    await runExpo(['prebuild', '--platform', 'android', '--no-install']);
+    restoreKey();
+    if (apkOnly) {
+      await run('cmd.exe', ['/d', '/s', '/c', 'gradlew.bat app:assembleRelease --build-cache'], join(root, 'android'));
+      const destination = exportApk(root, { apiUrl: env.EXPO_PUBLIC_API_URL, versionCode: releaseCode, version: app.version });
+      writeFileSync(statePath, JSON.stringify({ versionCode: releaseCode }, null, 2) + '\n');
+      console.log(`Downloadable APK: ${destination}`);
+      console.log(`Checksum: ${destination}.sha256`);
+    } else {
+      await runExpo(['run:android', ...args]);
+    }
+  } finally {
+    if (lock !== undefined) { closeSync(lock); unlinkSync(lockPath); }
+  }
 }
 
-build().catch((error) => { console.error(error.message); process.exitCode = 1; });
+module.exports = build().catch((error) => { console.error(error.message); process.exitCode = 1; });

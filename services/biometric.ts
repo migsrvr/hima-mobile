@@ -1,6 +1,8 @@
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Platform } from 'react-native';
 
+import { DEMO_MODE } from './demo';
+
 export type AuthMethod = 'Fingerprint' | 'PIN';
 
 /** Demo build's in-app payment PIN (STELLAR_PAIFLOW_IMPLEMENTATION.md). AuthorizeSheet checks it before calling onPin. */
@@ -11,11 +13,12 @@ export const isDemoPin = (pin: string) => pin === DEMO_PIN;
 /**
  * Asks the student to authorize a payment. "Fingerprint" uses biometrics only.
  * "PIN" is the in-app 4-digit PIN, already checked by the sheet against DEMO_PIN.
- * The web preview has no biometrics, so dev builds approve after a short pause.
+ * The web has no biometrics: dev builds approve after a short pause; the public demo build accepts
+ * only the in-app PIN, so the sheet falls back to it.
  */
 export async function authorizePayment(method: AuthMethod, prompt: string): Promise<boolean> {
   if (Platform.OS === 'web') {
-    if (!__DEV__) return false;
+    if (!__DEV__) return DEMO_MODE && method === 'PIN';
     await new Promise((resolve) => setTimeout(resolve, 500));
     return true;
   }

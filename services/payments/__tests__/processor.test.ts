@@ -1,4 +1,5 @@
 import { CONFIRMATION_TIMEOUT_MS, createPaiflowProcessor, shortHash } from '../processor';
+import { setApiSession } from '../../api';
 
 const HASH = '94be52e8a937b6ddcb85da7cd917f97d412753e5e3ca47ea48b252a264b2278d';
 const REQUEST = { paymentId: 'pay-1760414700000', merchantId: 'campus-canteen', amount: 85, reference: 'HM-1014-0042' };
@@ -22,6 +23,7 @@ function server(replies: Reply[]) {
   const sleeps: number[] = [];
   const processor = createPaiflowProcessor({
     fetchImpl,
+    ensureReady: async () => {},
     sleep: async (ms) => {
       sleeps.push(ms);
       clock += ms;
@@ -32,6 +34,30 @@ function server(replies: Reply[]) {
 }
 
 describe('Paiflow payment processor', () => {
+  it('stops polling the old payment when the account changes between status reads', async () => {
+    const fetchImpl = jest.fn() as unknown as typeof fetch;
+    setApiSession('account-a.token', async () => 'account-a.fresh');
+    const processor = createPaiflowProcessor({
+      fetchImpl, ensureReady: async () => {},
+      sleep: async () => { setApiSession('account-b.token', async () => 'account-b.fresh'); },
+    });
+    await expect(processor.waitForConfirmation(REQUEST.paymentId, HASH)).resolves.toEqual({ status: 'pending' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    setApiSession(null, null);
+  });
+
+  it('does not submit or repeat a wake attempt when readiness fails; the prior outcome stays unknown', async () => {
+    const fetchImpl = jest.fn() as unknown as typeof fetch;
+    const ensureReady = jest.fn(async () => { throw new Error('Backend sleeping or unavailable'); });
+    const sleep = jest.fn(async () => {});
+    const processor = createPaiflowProcessor({ fetchImpl, ensureReady, sleep });
+    await expect(processor.submit(REQUEST)).resolves.toEqual({ status: 'pending' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(ensureReady).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    await expect(processor.checkStatus(REQUEST.paymentId)).resolves.toEqual({ status: 'pending' });
+    expect(ensureReady).toHaveBeenCalledTimes(2);
+  });
   it('submits once to the Hima server and follows the payment until it is confirmed', async () => {
     const { processor, calls, sleeps } = server([
       { status: 200, body: view('pending') },
@@ -77,6 +103,17 @@ describe('Paiflow payment processor', () => {
     ]);
     expect(await processor.submit(REQUEST)).toEqual({ status: 'failed', failureReason: "Hima's testnet wallet isn't funded" });
     expect(calls.map((c) => c.method)).toEqual(['POST', 'GET']);
+  });
+
+  it("the public demo's daily limit (429) is a failed payment with the server's reason, and nothing is re-read", async () => {
+    const { processor, calls } = server([
+      { status: 429, body: { error: { code: 'RATE_LIMITED', message: 'The public demo allows a few testnet payments per day. Try again tomorrow.' } } },
+    ]);
+    expect(await processor.submit(REQUEST, { quoteId: REQUEST.paymentId })).toEqual({
+      status: 'failed',
+      failureReason: 'The public demo allows a few testnet payments per day. Try again tomorrow.',
+    });
+    expect(calls.map((c) => c.method)).toEqual(['POST']);
   });
 
   it('a submission that got no answer but reached the server takes the server\'s status', async () => {
