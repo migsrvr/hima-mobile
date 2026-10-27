@@ -4,7 +4,7 @@
 // (simulated tap, in-app PIN). Output: dist-web/, ready for `npx vercel deploy dist-web --prod`.
 // Refuses local or HTTP backends and any bundle that contains server-only configuration.
 const { spawnSync } = require('node:child_process');
-const { readdirSync, readFileSync, rmSync, statSync, writeFileSync } = require('node:fs');
+const { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { assertHostedApiUrl, serverSecrets } = require('./apk-artifact.cjs');
 
@@ -32,6 +32,17 @@ const files = (dir) => readdirSync(dir).flatMap((name) => {
   const path = join(dir, name);
   return statSync(path).isDirectory() ? files(path) : [path];
 });
+
+// Vercel never uploads node_modules folders, which would drop the fonts Expo exports under
+// assets/node_modules/. Move them to assets/vendor/ and point the bundle there.
+const vendored = join(out, 'assets', 'node_modules');
+if (existsSync(vendored)) {
+  renameSync(vendored, join(out, 'assets', 'vendor'));
+  for (const path of files(out).filter((p) => /\.(js|html|json)$/.test(p))) {
+    const source = readFileSync(path, 'utf8');
+    if (source.includes('/assets/node_modules/')) writeFileSync(path, source.split('/assets/node_modules/').join('/assets/vendor/'));
+  }
+}
 const scripts = files(out).filter((path) => path.endsWith('.js'));
 const bundle = scripts.map((path) => readFileSync(path, 'utf8')).join('\n');
 if (!bundle.includes(apiUrl)) {
