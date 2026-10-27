@@ -170,7 +170,7 @@ async function build() {
     await runExpo(['prebuild', '--platform', 'android', '--no-install']);
     restoreKey();
     if (apkOnly) {
-      await run('cmd.exe', ['/d', '/s', '/c', 'gradlew.bat app:assembleRelease --build-cache'], join(root, 'android'));
+      await run('cmd.exe', ['/d', '/s', '/c', '.\\gradlew.bat app:assembleRelease --build-cache'], join(root, 'android'));
       const destination = exportApk(root, { apiUrl: env.EXPO_PUBLIC_API_URL, versionCode: releaseCode, version: app.version });
       writeFileSync(statePath, JSON.stringify({ versionCode: releaseCode }, null, 2) + '\n');
       console.log(`Downloadable APK: ${destination}`);
